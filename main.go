@@ -1,17 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/websocket"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
-
-	"github.com/gorilla/websocket"
 )
 
 // replace with your client ID
 const clientID = "my_client_id"
+const localServer = "http://localhost:8000"
 
 type RequestMessage struct {
 	RequestID string            `json:"request_id"`
@@ -40,6 +42,8 @@ func main() {
 	}
 	defer c.Close()
 
+	log.Println("Connected to server:", u.String())
+
 	// Send client ID after establishing the connection
 	err = c.WriteMessage(
 		websocket.TextMessage,
@@ -48,6 +52,8 @@ func main() {
 	if err != nil {
 		log.Fatal("Error sending client ID:", err)
 	}
+
+	log.Println("Sent client ID:", clientID)
 
 	for {
 		// Wait for a message from the WebSocket server
@@ -65,12 +71,46 @@ func main() {
 				continue
 			}
 
+			b := bytes.NewBuffer([]byte(requestMessage.Body))
+
+			// Prepare the HTTP request
+			req, err := http.NewRequest(requestMessage.Method, localServer+requestMessage.Path, b)
+			if err != nil {
+				log.Println("Error creating request:", err)
+				continue
+			}
+
+			// Set the request headers
+			for k, v := range requestMessage.Header {
+				req.Header.Set(k, v)
+			}
+
+			// Send the HTTP request
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				log.Println("Error sending request:", err)
+				continue
+			}
+
+			// Read the response body
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				log.Println("Error reading response body:", err)
+				continue
+			}
+			defer resp.Body.Close()
+
+			header := make(map[string]string)
+			for k, v := range resp.Header {
+				header[k] = v[0]
+			}
+
 			// Prepare a JSON response
 			response := ResponseMessage{
 				RequestID:  requestMessage.RequestID,
-				StatusCode: http.StatusOK,
-				Header:     map[string]string{"Content-Type": "application/json"},
-				Body:       fmt.Sprintf(`{"message": "Hello, %s!"}`, requestMessage.Body),
+				StatusCode: resp.StatusCode,
+				Header:     header,
+				Body:       string(body),
 			}
 			responseJSON, err := json.Marshal(response)
 			if err != nil {
