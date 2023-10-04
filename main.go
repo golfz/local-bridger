@@ -66,6 +66,8 @@ func validatePrivateServerID() {
 }
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
+
 	initConfig()
 	validateConfig()
 	validatePrivateServerID()
@@ -115,7 +117,7 @@ func performWebsocketConnection() {
 		log.Println("error sending server info:", err)
 		return
 	}
-	log.Println("sent server info:", privateServerID)
+	log.Println("sent server info, serverID:", privateServerID)
 
 	for {
 		// Wait for a message from the WebSocket server
@@ -133,9 +135,7 @@ func performWebsocketConnection() {
 				return
 			}
 			continue
-		}
-
-		if messageType == websocket.TextMessage {
+		} else if messageType == websocket.TextMessage {
 
 			// Parse the received message (assuming it's JSON)
 			var requestMessage webSocketRequestMessage
@@ -145,6 +145,8 @@ func performWebsocketConnection() {
 				return
 			}
 
+			log.Printf("[requestID: %s] received request message, method: %s, path: %s\n", requestMessage.RequestID, requestMessage.Method, requestMessage.Path)
+
 			// Prepare the HTTP request
 			reqBody := bytes.NewBuffer([]byte(requestMessage.Body))
 			reqURL := viper.GetString("private.server.host") + requestMessage.Path
@@ -153,7 +155,7 @@ func performWebsocketConnection() {
 			}
 			req, err := http.NewRequest(requestMessage.Method, reqURL, reqBody)
 			if err != nil {
-				log.Println("Error creating request:", err)
+				log.Printf("[requestID: %s] Error creating request: %v\n", requestMessage.RequestID, err)
 				responseError(c, requestMessage.RequestID, http.StatusInternalServerError, "cannot create request")
 				continue
 			}
@@ -163,10 +165,12 @@ func performWebsocketConnection() {
 				req.Header.Set(k, v)
 			}
 
+			log.Printf("[requestID: %s] try to request to private server, method: %s, path: %s\n", requestMessage.RequestID, requestMessage.Method, requestMessage.Path)
+
 			// Send the HTTP request
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
-				log.Println("Error sending request:", err)
+				log.Printf("[requestID: %s] Error sending request: %v\n", requestMessage.RequestID, err)
 				responseError(c, requestMessage.RequestID, http.StatusInternalServerError, "cannot send request")
 				continue
 			}
@@ -174,11 +178,13 @@ func performWebsocketConnection() {
 			// Read the response body
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
-				log.Println("Error reading response body:", err)
+				log.Printf("[requestID: %s] Error reading response body: %v\n", requestMessage.RequestID, err)
 				responseError(c, requestMessage.RequestID, http.StatusInternalServerError, "cannot read response body")
 				continue
 			}
 			defer resp.Body.Close()
+
+			log.Printf("[requestID: %s] received response from private server, status code: %d\n", requestMessage.RequestID, resp.StatusCode)
 
 			header := make(map[string]string)
 			for k, v := range resp.Header {
@@ -194,17 +200,21 @@ func performWebsocketConnection() {
 			}
 			responseJSON, err := json.Marshal(response)
 			if err != nil {
-				log.Println("Error marshalling JSON:", err)
+				log.Printf("[requestID: %s] Error marshalling response: %v\n", requestMessage.RequestID, err)
 				responseError(c, requestMessage.RequestID, http.StatusInternalServerError, "cannot marshal response")
 				continue
 			}
 
+			log.Printf("[requestID: %s] try to send response to cloud server\n", requestMessage.RequestID)
+
 			// Send the JSON response back to the WebSocket server
 			if err := c.WriteMessage(websocket.TextMessage, responseJSON); err != nil {
-				log.Println("Error writing response:", err)
+				log.Printf("[requestID: %s] Error sending response: %v\n", requestMessage.RequestID, err)
 				// return for disconnecting and reconnecting, because we can't handle the error
 				return
 			}
+
+			log.Printf("[requestID: %s] response sent to cloud server success\n", requestMessage.RequestID)
 		}
 	}
 }
