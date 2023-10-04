@@ -1,0 +1,9 @@
+private:
+    server:
+        host: "http://localhost:8080"
+        id: ""
+
+cloud:
+    server:
+        host: "localhost:9999"
+        path: "/ws"

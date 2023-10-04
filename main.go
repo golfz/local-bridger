@@ -4,18 +4,24 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/spf13/viper"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
+	"time"
 )
 
-// replace with your client ID
-const privateServerID = "my_client_id"
-const localServer = "http://localhost:8000"
+var privateServerID = ""
 
-type RequestMessage struct {
+type serverInfoMessage struct {
+	PrivateServerID string `json:"private_server_id"`
+}
+
+type webSocketRequestMessage struct {
 	RequestID string            `json:"request_id"`
 	Method    string            `json:"method"`
 	Path      string            `json:"path"`
@@ -24,36 +30,92 @@ type RequestMessage struct {
 	Body      string            `json:"body"`
 }
 
-type ResponseMessage struct {
+type webSocketResponseMessage struct {
 	RequestID  string            `json:"request_id"`
 	StatusCode int               `json:"status_code"`
 	Header     map[string]string `json:"header"`
 	Body       string            `json:"body"`
 }
 
+func initConfig() {
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(".")
+	viper.AutomaticEnv()
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	err := viper.ReadInConfig()
+	if err != nil {
+		log.Fatal("error reading config file:", err)
+	}
+}
+
+func validateConfig() {
+	if viper.GetString("private.server.host") == "" {
+		log.Fatal("PRIVATE_SERVER_HOST is required")
+	}
+	if viper.GetString("cloud.server.host") == "" {
+		log.Fatal("CLOUD_SERVER_HOST is required")
+	}
+}
+
+func validatePrivateServerID() {
+	privateServerID = viper.GetString("private.server.id")
+	if privateServerID == "" {
+		privateServerID = uuid.New().String()
+	}
+}
+
 func main() {
+	initConfig()
+	validateConfig()
+	validatePrivateServerID()
+
+	for {
+		performWebsocketConnection()
+
+		// Reconnect to the WebSocket server
+		log.Println("reconnecting...")
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func performWebsocketConnection() {
+	defer log.Println("connection closed")
+
 	// Prepare the WebSocket server URL
-	u := url.URL{Scheme: "ws", Host: "localhost:9999", Path: "/ws"} // Change the host and path accordingly
+	u := url.URL{
+		Scheme: "ws",
+		Host:   viper.GetString("cloud.server.host"),
+		Path:   viper.GetString("cloud.server.path"),
+	} // Change the host and path accordingly
 
 	// Connect to WebSocket server
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
-		log.Fatal("Error while connecting:", err)
+		log.Println("error while connecting to cloud server:", err)
+		return
 	}
 	defer c.Close()
-
-	log.Println("connected to bridger server:", u.String())
+	log.Println("connected to cloud server:", u.String())
 
 	// Send private server ID after establishing the connection
+	serverInfo := serverInfoMessage{
+		PrivateServerID: privateServerID,
+	}
+	serverInfoJSON, err := json.Marshal(serverInfo)
+	if err != nil {
+		log.Println("error marshalling server info JSON:", err)
+		return
+	}
 	err = c.WriteMessage(
 		websocket.TextMessage,
-		[]byte(fmt.Sprintf(`{"private_server_id": "%s"}`, privateServerID)),
+		serverInfoJSON,
 	)
 	if err != nil {
-		log.Fatal("Error sending private_server_id:", err)
+		log.Println("error sending server info:", err)
+		return
 	}
-
-	log.Println("sent private_server_id:", privateServerID)
+	log.Println("sent server info:", privateServerID)
 
 	for {
 		// Wait for a message from the WebSocket server
@@ -64,19 +126,22 @@ func main() {
 		}
 
 		if messageType == websocket.TextMessage {
+
 			// Parse the received message (assuming it's JSON)
-			var requestMessage RequestMessage
+			var requestMessage webSocketRequestMessage
 			if err := json.Unmarshal(message, &requestMessage); err != nil {
 				log.Println("Error unmarshalling JSON:", err)
-				continue
+				// return for disconnecting and reconnecting, because we can't handle the error
+				return
 			}
 
-			b := bytes.NewBuffer([]byte(requestMessage.Body))
-
 			// Prepare the HTTP request
-			req, err := http.NewRequest(requestMessage.Method, localServer+requestMessage.Path, b)
+			reqBody := bytes.NewBuffer([]byte(requestMessage.Body))
+			reqURL := viper.GetString("private.server.host") + requestMessage.Path
+			req, err := http.NewRequest(requestMessage.Method, reqURL, reqBody)
 			if err != nil {
 				log.Println("Error creating request:", err)
+				responseError(c, requestMessage.RequestID, http.StatusInternalServerError, "cannot create request")
 				continue
 			}
 
@@ -89,6 +154,7 @@ func main() {
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				log.Println("Error sending request:", err)
+				responseError(c, requestMessage.RequestID, http.StatusInternalServerError, "cannot send request")
 				continue
 			}
 
@@ -96,6 +162,7 @@ func main() {
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
 				log.Println("Error reading response body:", err)
+				responseError(c, requestMessage.RequestID, http.StatusInternalServerError, "cannot read response body")
 				continue
 			}
 			defer resp.Body.Close()
@@ -106,7 +173,7 @@ func main() {
 			}
 
 			// Prepare a JSON response
-			response := ResponseMessage{
+			response := webSocketResponseMessage{
 				RequestID:  requestMessage.RequestID,
 				StatusCode: resp.StatusCode,
 				Header:     header,
@@ -115,13 +182,34 @@ func main() {
 			responseJSON, err := json.Marshal(response)
 			if err != nil {
 				log.Println("Error marshalling JSON:", err)
+				responseError(c, requestMessage.RequestID, http.StatusInternalServerError, "cannot marshal response")
 				continue
 			}
 
 			// Send the JSON response back to the WebSocket server
 			if err := c.WriteMessage(websocket.TextMessage, responseJSON); err != nil {
 				log.Println("Error writing response:", err)
+				// return for disconnecting and reconnecting, because we can't handle the error
+				return
 			}
 		}
 	}
+}
+
+func responseToWebsocket(c *websocket.Conn, v webSocketResponseMessage) {
+	if err := c.WriteJSON(v); err != nil {
+		log.Println("error writing response to websocket:", err)
+		return
+	}
+	log.Println("response sent to websocket success")
+}
+
+func responseError(c *websocket.Conn, requestID string, statusCode int, msg string) {
+	response := webSocketResponseMessage{
+		RequestID:  requestID,
+		StatusCode: statusCode,
+		Header:     map[string]string{"Content-Type": "application/json"},
+		Body:       fmt.Sprintf(`{"error": "%s"}`, msg),
+	}
+	responseToWebsocket(c, response)
 }
