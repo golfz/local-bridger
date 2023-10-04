@@ -12,7 +12,7 @@ import (
 )
 
 // replace with your client ID
-const clientID = "my_client_id"
+const privateServerID = "my_client_id"
 const localServer = "http://localhost:8000"
 
 type RequestMessage struct {
@@ -42,18 +42,18 @@ func main() {
 	}
 	defer c.Close()
 
-	log.Println("Connected to server:", u.String())
+	log.Println("connected to bridger server:", u.String())
 
-	// Send client ID after establishing the connection
+	// Send private server ID after establishing the connection
 	err = c.WriteMessage(
 		websocket.TextMessage,
-		[]byte(fmt.Sprintf(`{"client_id": "%s"}`, clientID)),
+		[]byte(fmt.Sprintf(`{"private_server_id": "%s"}`, privateServerID)),
 	)
 	if err != nil {
-		log.Fatal("Error sending client ID:", err)
+		log.Fatal("Error sending private_server_id:", err)
 	}
 
-	log.Println("Sent client ID:", clientID)
+	log.Println("sent private_server_id:", privateServerID)
 
 	for {
 		// Wait for a message from the WebSocket server
