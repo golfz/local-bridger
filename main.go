@@ -138,6 +138,9 @@ func performWebsocketConnection() {
 			// Prepare the HTTP request
 			reqBody := bytes.NewBuffer([]byte(requestMessage.Body))
 			reqURL := viper.GetString("private.server.host") + requestMessage.Path
+			if requestMessage.Query != "" {
+				reqURL += "?" + requestMessage.Query
+			}
 			req, err := http.NewRequest(requestMessage.Method, reqURL, reqBody)
 			if err != nil {
 				log.Println("Error creating request:", err)
