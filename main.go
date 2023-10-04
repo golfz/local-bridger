@@ -125,6 +125,16 @@ func performWebsocketConnection() {
 			return
 		}
 
+		if messageType == websocket.PingMessage {
+			err := c.WriteMessage(websocket.PongMessage, []byte{})
+			if err != nil {
+				log.Println("Error while sending pong:", err)
+				// return for disconnecting and reconnecting, because we can't handle the error
+				return
+			}
+			continue
+		}
+
 		if messageType == websocket.TextMessage {
 
 			// Parse the received message (assuming it's JSON)
