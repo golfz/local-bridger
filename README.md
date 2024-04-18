@@ -6,6 +6,8 @@ sends them to a private local server.
 It then collects the HTTP responses, converts them into JSON messages, and sends them back to a "Cloud Bridger" via a
 WebSocket.
 
+This service works with the "Cloud Bridger" tool you can find on GitHub here: https://github.com/golfz/cloud-bridger.
+
 ## Configuration
 
 - see `config.yaml` for configuration options
