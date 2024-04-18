@@ -1,6 +1,10 @@
-# ws2rest
+# Local Bridger
 
-**Local Bridger** for WebSockets to REST
+A local service that receives JSON messages from a cloud server via a WebSocket, converts them into HTTP requests and
+sends them to a private local server.
+
+It then collects the HTTP responses, converts them into JSON messages, and sends them back to a "Cloud Bridger" via a
+WebSocket.
 
 ## Configuration
 
@@ -9,16 +13,25 @@
 
 ### Environment Variables
 
-**Private Server**
+**Local**
 
-| Environment Variable  | Description                    | Comment  |
-|-----------------------|--------------------------------|----------|
-| `PRIVATE_SERVER_HOST` | the host of the private server | required |
-| `PRIVATE_SERVER_ID`   | the id of the private server   | required |
+| Environment Variable | Description                                                        | Comment  |
+|----------------------|--------------------------------------------------------------------|----------|
+| `LOCAL_ID`           | the unique id of the private local server, e.g. `local-Em4Yk899`   | required |
+| `LOCAL_HOST`         | the host of the private local server, e.g. `http://localhost:8080` | required |
 
-**Cloud Server**
+**Cloud**
 
-| Environment Variable | Description                                     | Comment  |
-|----------------------|-------------------------------------------------|----------|
-| `CLOUD_SERVER_HOST`  | the host of the cloud server                    | required |
-| `CLOUD_SERVER_PATH`  | the path of the cloud server, defaults to `/ws` | optional |
+| Environment Variable | Description                                                           | Comment  |
+|----------------------|-----------------------------------------------------------------------|----------|
+| `CLOUD_WEBSOCKET`    | path to connect to the cloud's WebSocket, e.g. `wss://example.com/ws` | required |
+
+## Running
+
+**Example**
+
+```shell
+LOCAL_ID=Em4Yk899 LOCAL_HOST=http://localhost:8080 CLOUD_WEBSOCKET=wss://example.com/ws go run main.go
+```
+
+You must change the values of `LOCAL_ID`, `LOCAL_HOST`, and `CLOUD_WEBSOCKET` to match your setup.

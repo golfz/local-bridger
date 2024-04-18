@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -10,12 +11,22 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
 
-var privateServerID = ""
+var localID = ""
+
+const (
+	viperKeyLocalID        = "local.id"
+	viperKeyLocalHost      = "local.host"
+	viperKeyCloudWebsocket = "cloud.websocket"
+)
+
+var (
+	errLocalHostRequired      = errors.New("LOCAL_HOST environment variable is required")
+	errCloudWebsocketRequired = errors.New("CLOUD_WEBSOCKET environment variable is required")
+)
 
 type serverInfoMessage struct {
 	PrivateServerID string `json:"private_server_id"`
@@ -37,7 +48,17 @@ type webSocketResponseMessage struct {
 	Body       string            `json:"body"`
 }
 
-func initConfig() {
+func validateConfig() error {
+	if viper.GetString(viperKeyLocalHost) == "" {
+		return errLocalHostRequired
+	}
+	if viper.GetString(viperKeyCloudWebsocket) == "" {
+		return errCloudWebsocketRequired
+	}
+	return nil
+}
+
+func initConfig() error {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(".")
@@ -45,32 +66,28 @@ func initConfig() {
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	err := viper.ReadInConfig()
 	if err != nil {
-		log.Fatal("error reading config file:", err)
+		return fmt.Errorf("error reading config file: %v", err)
 	}
+
+	return validateConfig()
 }
 
-func validateConfig() {
-	if viper.GetString("private.server.host") == "" {
-		log.Fatal("PRIVATE_SERVER_HOST is required")
+func getLocalID() string {
+	if localID != "" {
+		return localID
 	}
-	if viper.GetString("cloud.server.host") == "" {
-		log.Fatal("CLOUD_SERVER_HOST is required")
+	if localID = strings.TrimSpace(viper.GetString(viperKeyLocalID)); localID == "" {
+		localID = uuid.New().String()
 	}
-}
-
-func validatePrivateServerID() {
-	privateServerID = viper.GetString("private.server.id")
-	if privateServerID == "" {
-		privateServerID = uuid.New().String()
-	}
+	return localID
 }
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
 
-	initConfig()
-	validateConfig()
-	validatePrivateServerID()
+	if err := initConfig(); err != nil {
+		log.Fatalf("error initializing config: %v", err)
+	}
 
 	for {
 		performWebsocketConnection()
@@ -84,25 +101,20 @@ func main() {
 func performWebsocketConnection() {
 	defer log.Println("connection closed")
 
-	// Prepare the WebSocket server URL
-	u := url.URL{
-		Scheme: "ws",
-		Host:   viper.GetString("cloud.server.host"),
-		Path:   viper.GetString("cloud.server.path"),
-	} // Change the host and path accordingly
+	wsURL := viper.GetString("cloud.websocket")
 
 	// Connect to WebSocket server
-	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		log.Println("error while connecting to cloud server:", err)
 		return
 	}
 	defer c.Close()
-	log.Println("connected to cloud server:", u.String())
+	log.Println(`connected to "Cloud-Bridger":`, wsURL)
 
 	// Send private server ID after establishing the connection
 	serverInfo := serverInfoMessage{
-		PrivateServerID: privateServerID,
+		PrivateServerID: getLocalID(),
 	}
 	serverInfoJSON, err := json.Marshal(serverInfo)
 	if err != nil {
@@ -117,7 +129,8 @@ func performWebsocketConnection() {
 		log.Println("error sending server info:", err)
 		return
 	}
-	log.Println("sent server info, serverID:", privateServerID)
+	log.Println(`registered local to "Cloud-Bridger"`)
+	log.Printf("X-Private-Server-ID: %s\n", getLocalID())
 
 	for {
 		// Wait for a message from the WebSocket server
@@ -149,7 +162,7 @@ func performWebsocketConnection() {
 
 			// Prepare the HTTP request
 			reqBody := bytes.NewBuffer([]byte(requestMessage.Body))
-			reqURL := viper.GetString("private.server.host") + requestMessage.Path
+			reqURL := viper.GetString("local.host") + requestMessage.Path
 			if requestMessage.Query != "" {
 				reqURL += "?" + requestMessage.Query
 			}

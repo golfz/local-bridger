@@ -1,9 +1,6 @@
-private:
-    server:
-        host: "http://localhost:8080"
-        id: ""
+local:
+    id: ""
+    host: "http://localhost:8080"
 
 cloud:
-    server:
-        host: "localhost:9999"
-        path: "/ws"
+    websocket: "wss://example.com:5000/ws"

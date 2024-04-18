@@ -1,6 +1,6 @@
-module github.com/golfz/ws2rest
+module github.com/golfz/local-bridger
 
-go 1.21.1
+go 1.22.2
 
 require (
 	github.com/google/uuid v1.1.2
